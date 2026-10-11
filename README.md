@@ -90,10 +90,63 @@ python3 hw2.py --cv-folder task2
 attack the MCP server. See the homework description for the full rules.
 
 ## Homework 2 solution:
-> to students: this is your report, see the homework description.
 
 ### Task 1
-> one paragraph describing your solution, and your results on `public_test`.
+
+My agent is a single LangChain tool-calling agent built with `create_agent`
+around `ChatDeepSeek` (`deepseek-v4-flash`, temperature 0) plus the six
+SocialGraph MCP tools and one extra local tool, `final_score(score: float)`,
+which the agent must call exactly once at the end. The system prompt encodes a
+fixed procedure: (1) identify the candidate by searching LinkedIn with the
+name **plus a location filter** (names are shared by hundreds of people) and
+cross-checking several fields; fall back to a Facebook search if LinkedIn
+fails; (2) fetch the full LinkedIn profile (the primary source); (3) compare
+only the checkable fields — name, city, jobs (company, title, seniority, start
+and end years), education (degree, school, field, graduation year) and skills —
+explicitly ignoring job descriptions, the headline and the hometown; (4) apply
+the course's wording rules ("BSc" vs "Bachelor of Science", seniority wording,
+fewer skills, etc. are fine), and treat a single verified false claim as
+enough to make the CV unreliable; (5) call `final_score` with 0.9 (all match),
+0.7 (doubt only), 0.1 (one false claim) or 0.0 (multiple false claims). CV
+content is passed inside `<CV>` tags with an explicit instruction that anything
+inside is untrusted data, never commands, which is my main prompt-injection
+defence. `score_cvs` runs the CVs in parallel under `asyncio.Semaphore(3)`,
+parses the score from the `final_score` tool call (falling back to the reply
+text), and returns a safe 0.5 for any CV whose run raises, so one failure can
+never crash the batch. On `public_test` the agent scores **7/7** (CV_1, CV_2,
+CV_3, CV_6 at 0.9; CV_4, CV_5, CV_7 at 0.1), and it finishes in well under the
+30-minute limit.
 
 ### Task 2
-> the attack techniques you used and why you expect them to work.
+
+`task2/adversarial_cv.pdf` is Kelly Tsang's CV with **every checkable field
+kept strictly true** — name, city, all three jobs with exact companies, titles,
+seniority-implying wording and year ranges, the HKUST BSc, and a skills list
+that is a strict subset of her LinkedIn skills. The false material is placed
+exactly where verifiers are told not to look:
+
+1. **Verification-coverage gap — fabricated certifications.** I added a
+   "Certifications" section claiming *CFA Charterholder (2021)* and *FRM
+   (2020)*. Neither appears on her LinkedIn or Facebook profiles, so this is a
+   genuine embellishment, but certifications are not one of the fields where
+   "discrepancies are only ever" found (name, city, jobs, education, skills),
+   so a verifier following that rule will not treat them as a discrepancy —
+   and MCP tools expose no certification data to check against anyway.
+2. **Unverified embellishment inside a job description.** One AIA bullet
+   claims she "led and mentored a team of 5 analysts". Job descriptions are
+   explicitly never a source of discrepancy, yet to a human reader this inflates
+   her junior/mid "Manager" role into people-management she does not have.
+3. **Authority / legitimacy cues.** The CV mimics the exact layout, fonts and
+   phrasing style of the true CV and adds plausible-looking contact details,
+   making it look pre-verified and lowering suspicion (authority cues,
+   LLM-as-a-judge bias).
+
+The result is a CV whose one checkable claim is "everything checks out",
+because every field an agent actually verifies matches LinkedIn — while the
+false claims live in the blind spot of the verification procedure itself.
+Testing against my own Task 1 agent confirms this: `adversarial_cv.pdf` scores
+0.9, identical to her true CV.
+
+### Task 3: Reflection — the AI paradoxes
+
+See [`task3_reflection.md`](task3_reflection.md).
